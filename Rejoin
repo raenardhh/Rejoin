@@ -1,0 +1,379 @@
+--// Auto Rejoin to Main Menu + UI (Slayers 2)
+local DEFAULT_MINUTES = 20            -- time before going back to the menu
+local MENU_PLACE_ID   = 16205713724   -- Slayers 2 main menu (start place)
+
+local env = (getgenv and getgenv()) or _G
+env.ARM_DEFAULT_MIN = DEFAULT_MINUTES
+env.ARM_MENU_ID = MENU_PLACE_ID
+env.ARM_FRESH = true
+
+env.ARM_SOURCE = [==[
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local UserInputService = game:GetService("UserInputService")
+local VirtualUser = game:GetService("VirtualUser")
+local GuiService = game:GetService("GuiService")
+local HttpService = game:GetService("HttpService")
+
+if not game:IsLoaded() then game.Loaded:Wait() end
+repeat task.wait() until Players.LocalPlayer
+local player = Players.LocalPlayer
+
+local env = (getgenv and getgenv()) or _G
+local MY_SOURCE = env.ARM_SOURCE
+local CONFIG_FILE = "AutoRejoinMenu.json"
+local fresh = env.ARM_FRESH
+env.ARM_FRESH = nil
+
+--================ Settings ================--
+local settings = {
+    enabled = true,
+    minutes = tonumber(env.ARM_DEFAULT_MIN) or 20,
+    onKick  = true,
+    antiAfk = true,
+    menuId  = tonumber(env.ARM_MENU_ID) or 16205713724,
+}
+
+-- After a teleport, load saved settings from file
+if not fresh then
+    pcall(function()
+        if isfile and isfile(CONFIG_FILE) then
+            local saved = HttpService:JSONDecode(readfile(CONFIG_FILE))
+            for k, v in pairs(saved) do
+                if settings[k] ~= nil and type(v) == type(settings[k]) then
+                    settings[k] = v
+                end
+            end
+        end
+    end)
+end
+
+local function save()
+    if writefile then
+        pcall(writefile, CONFIG_FILE, HttpService:JSONEncode(settings))
+    end
+end
+save()
+
+local function inMenu() return game.PlaceId == settings.menuId end
+
+-- Queue script so it reloads after ANY teleport (ours or the game's own)
+local queueTeleport = (syn and syn.queue_on_teleport) or queue_on_teleport
+    or (fluxus and fluxus.queue_on_teleport)
+if queueTeleport then
+    pcall(queueTeleport,
+        "local env=(getgenv and getgenv()) or _G\n" ..
+        "env.ARM_SOURCE=" .. string.format("%q", MY_SOURCE) .. "\n" ..
+        "loadstring(env.ARM_SOURCE)()")
+end
+
+--================ UI ================--
+local function make(class, props, parent)
+    local obj = Instance.new(class)
+    for k, v in pairs(props) do obj[k] = v end
+    obj.Parent = parent
+    return obj
+end
+local function corner(obj, r)
+    make("UICorner", {CornerRadius = UDim.new(0, r or 6)}, obj)
+end
+
+local guiParent = (gethui and gethui()) or game:GetService("CoreGui")
+for _, p in ipairs({guiParent, player:FindFirstChild("PlayerGui")}) do
+    if p and p:FindFirstChild("AutoRejoinMenuUI") then p.AutoRejoinMenuUI:Destroy() end
+end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "AutoRejoinMenuUI"
+gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+if not pcall(function() gui.Parent = guiParent end) or not gui.Parent then
+    gui.Parent = player:WaitForChild("PlayerGui")
+end
+
+local FULL_H = 370
+local main = make("Frame", {
+    Size = UDim2.new(0, 250, 0, FULL_H),
+    Position = UDim2.new(0, 20, 0.25, 0),
+    BackgroundColor3 = Color3.fromRGB(25, 25, 30),
+    BorderSizePixel = 0,
+}, gui)
+corner(main, 8)
+
+local titleBar = make("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 32),
+    BackgroundColor3 = Color3.fromRGB(40, 40, 50),
+    BorderSizePixel = 0,
+    Text = "  Auto Rejoin -> Main Menu",
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Font = Enum.Font.GothamBold,
+    TextSize = 14,
+    TextColor3 = Color3.new(1, 1, 1),
+}, main)
+corner(titleBar, 8)
+
+local minBtn = make("TextButton", {
+    Size = UDim2.new(0, 28, 0, 24),
+    Position = UDim2.new(1, -32, 0, 4),
+    BackgroundColor3 = Color3.fromRGB(60, 60, 75),
+    Text = "-",
+    Font = Enum.Font.GothamBold,
+    TextSize = 16,
+    TextColor3 = Color3.new(1, 1, 1),
+}, titleBar)
+corner(minBtn, 4)
+
+local content = make("Frame", {
+    Size = UDim2.new(1, 0, 1, -32),
+    Position = UDim2.new(0, 0, 0, 32),
+    BackgroundTransparency = 1,
+}, main)
+make("UIPadding", {
+    PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10),
+    PaddingTop = UDim.new(0, 8),
+}, content)
+make("UIListLayout", {
+    Padding = UDim.new(0, 6),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+}, content)
+
+local timerLabel = make("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 40),
+    BackgroundTransparency = 1,
+    Text = "",
+    Font = Enum.Font.GothamBold,
+    TextSize = 32,
+    TextColor3 = Color3.fromRGB(120, 200, 255),
+    LayoutOrder = 1,
+}, content)
+
+local statusLabel = make("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 30),
+    BackgroundTransparency = 1,
+    Text = "",
+    TextWrapped = true,
+    Font = Enum.Font.Gotham,
+    TextSize = 11,
+    TextColor3 = Color3.fromRGB(190, 190, 190),
+    LayoutOrder = 2,
+}, content)
+
+local infoLabel = make("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 16),
+    BackgroundTransparency = 1,
+    Text = "",
+    Font = Enum.Font.Gotham,
+    TextSize = 10,
+    TextColor3 = Color3.fromRGB(140, 140, 150),
+    LayoutOrder = 3,
+}, content)
+
+local row = make("Frame", {
+    Size = UDim2.new(1, 0, 0, 28),
+    BackgroundTransparency = 1,
+    LayoutOrder = 4,
+}, content)
+make("TextLabel", {
+    Size = UDim2.new(0.6, 0, 1, 0),
+    BackgroundTransparency = 1,
+    Text = "Interval (minutes):",
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Font = Enum.Font.Gotham,
+    TextSize = 13,
+    TextColor3 = Color3.new(1, 1, 1),
+}, row)
+local intervalBox = make("TextBox", {
+    Size = UDim2.new(0.4, 0, 1, 0),
+    Position = UDim2.new(0.6, 0, 0, 0),
+    BackgroundColor3 = Color3.fromRGB(45, 45, 55),
+    Text = tostring(settings.minutes),
+    ClearTextOnFocus = false,
+    Font = Enum.Font.GothamBold,
+    TextSize = 13,
+    TextColor3 = Color3.new(1, 1, 1),
+}, row)
+corner(intervalBox, 4)
+
+local function button(text, order)
+    local b = make("TextButton", {
+        Size = UDim2.new(1, 0, 0, 30),
+        BackgroundColor3 = Color3.fromRGB(50, 50, 62),
+        Text = text,
+        Font = Enum.Font.GothamBold,
+        TextSize = 13,
+        TextColor3 = Color3.new(1, 1, 1),
+        AutoButtonColor = true,
+        LayoutOrder = order,
+    }, content)
+    corner(b, 6)
+    return b
+end
+
+local toggleBtn = button("", 5)
+local kickBtn   = button("", 6)
+local afkBtn    = button("", 7)
+local setMenuBtn = button("Set Current Place as Menu", 8)
+local nowBtn    = button("Go to Main Menu Now", 9)
+nowBtn.BackgroundColor3 = Color3.fromRGB(200, 120, 40)
+
+--================ Logic ================--
+local remaining = settings.minutes * 60
+local rejoining = false
+local failCount = 0
+
+local function setStatus(t) statusLabel.Text = t end
+
+local function fmt(s)
+    s = math.max(0, math.floor(s))
+    local h = math.floor(s / 3600)
+    local m = math.floor((s % 3600) / 60)
+    local sec = s % 60
+    if h > 0 then return string.format("%d:%02d:%02d", h, m, sec) end
+    return string.format("%02d:%02d", m, sec)
+end
+
+local function refresh()
+    toggleBtn.Text = "Timer: " .. (settings.enabled and "ON" or "OFF")
+    toggleBtn.BackgroundColor3 = settings.enabled
+        and Color3.fromRGB(50, 160, 80) or Color3.fromRGB(180, 50, 50)
+    kickBtn.Text = "Rejoin Menu on Kick: " .. (settings.onKick and "ON" or "OFF")
+    afkBtn.Text = "Anti-AFK: " .. (settings.antiAfk and "ON" or "OFF")
+    infoLabel.Text = "Place: " .. game.PlaceId .. "  |  Menu: " .. settings.menuId
+    timerLabel.Text = inMenu() and "MENU" or fmt(remaining)
+end
+
+local function goMenu(reason)
+    if rejoining then return end
+    rejoining = true
+    setStatus((reason or "Rejoining") .. " - going to main menu...")
+    local ok, err = pcall(function()
+        TeleportService:Teleport(settings.menuId, player)
+    end)
+    if not ok then
+        rejoining = false
+        setStatus("Error: " .. tostring(err))
+    end
+end
+
+TeleportService.TeleportInitFailed:Connect(function(plr, result, err)
+    if plr ~= player then return end
+    rejoining = false
+    failCount += 1
+    if failCount > 10 then
+        failCount = 0
+        remaining = settings.minutes * 60
+        setStatus("Gave up after 10 tries. Timer reset.")
+        return
+    end
+    setStatus("Failed (" .. tostring(result) .. ") - retry " .. failCount .. "/10")
+    task.wait(3)
+    goMenu("Retrying")
+end)
+
+-- Rejoin menu when kicked / disconnected
+GuiService.ErrorMessageChanged:Connect(function(msg)
+    if settings.onKick and msg ~= "" and not rejoining then
+        task.wait(2)
+        goMenu("Disconnected")
+    end
+end)
+
+-- Anti-AFK
+player.Idled:Connect(function()
+    if settings.antiAfk then
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new())
+    end
+end)
+
+--================ Buttons ================--
+toggleBtn.MouseButton1Click:Connect(function()
+    settings.enabled = not settings.enabled
+    if settings.enabled and remaining <= 0 then remaining = settings.minutes * 60 end
+    save(); refresh()
+end)
+
+kickBtn.MouseButton1Click:Connect(function()
+    settings.onKick = not settings.onKick
+    save(); refresh()
+end)
+
+afkBtn.MouseButton1Click:Connect(function()
+    settings.antiAfk = not settings.antiAfk
+    save(); refresh()
+end)
+
+setMenuBtn.MouseButton1Click:Connect(function()
+    settings.menuId = game.PlaceId
+    save(); refresh()
+    setStatus("Menu set to this place (" .. game.PlaceId .. ")")
+end)
+
+nowBtn.MouseButton1Click:Connect(function()
+    goMenu("Manual")
+end)
+
+intervalBox.FocusLost:Connect(function()
+    local n = tonumber(intervalBox.Text)
+    if n then
+        settings.minutes = math.clamp(math.floor(n), 1, 1440)
+        remaining = settings.minutes * 60
+        save(); refresh()
+        setStatus("Interval set to " .. settings.minutes .. " min")
+    end
+    intervalBox.Text = tostring(settings.minutes)
+end)
+
+local minimized = false
+minBtn.MouseButton1Click:Connect(function()
+    minimized = not minimized
+    content.Visible = not minimized
+    main.Size = minimized and UDim2.new(0, 250, 0, 32) or UDim2.new(0, 250, 0, FULL_H)
+    minBtn.Text = minimized and "+" or "-"
+end)
+
+-- Dragging (mouse + touch)
+local dragging, dragStart, startPos
+titleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = main.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+        end)
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch) then
+        local d = input.Position - dragStart
+        main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
+            startPos.Y.Scale, startPos.Y.Offset + d.Y)
+    end
+end)
+
+--================ Start ================--
+refresh()
+if not queueTeleport then
+    setStatus("Executor has no queue_on_teleport - put script in autoexec")
+elseif inMenu() then
+    setStatus("In main menu. Press Play - script reloads in-game.")
+else
+    setStatus(settings.enabled and "Timer running" or "Timer off")
+end
+
+task.spawn(function()
+    while gui.Parent do
+        task.wait(1)
+        if not inMenu() and settings.enabled and not rejoining then
+            remaining -= 1
+            if remaining <= 0 then goMenu("Timer done") end
+        end
+        timerLabel.Text = inMenu() and "MENU" or fmt(remaining)
+    end
+end)
+]==]
+
+loadstring(env.ARM_SOURCE)()
